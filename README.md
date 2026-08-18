@@ -102,5 +102,4 @@ on the churn class rather than accuracy, since the dataset is imbalanced
 
 ## License
 
-This is an educational/internship project. The dataset is publicly available
-under its own license via Kaggle/IBM.
+This is an educational/internship project.
