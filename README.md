@@ -100,6 +100,45 @@ on the churn class rather than accuracy, since the dataset is imbalanced
 | Recall (churn class) | ≥ 0.70 |
 | Precision (churn class) | ≥ 0.55 |
 
+
+## Week 5 — Model Optimization & Experimentation
+
+Week 5 extends the baseline machine-learning pipeline with systematic
+hyperparameter optimization.
+
+Three optimization strategies are compared:
+
+1. Grid Search
+2. Randomized Search
+3. Bayesian Optimization using Optuna
+
+### Experimental Design
+
+All experiments use the same:
+
+- 80/20 stratified train-test split
+- Random seed: 42
+- 5-fold Stratified Cross-Validation
+- Primary optimization metric: ROC-AUC
+- Held-out test set reserved for final evaluation
+
+### Hyperparameters Optimized
+
+For the Random Forest model:
+
+- n_estimators
+- max_depth
+- min_samples_split
+- min_samples_leaf
+- max_features
+- class_weight
+
+### Run Week 5 Optimization
+
+```bash
+python -m src.optimize \
+    --data data/telco_customer_churn.csv
+
 ## License
 
 This is an educational/internship project.
