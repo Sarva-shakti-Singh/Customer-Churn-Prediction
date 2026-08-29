@@ -14,15 +14,16 @@ import joblib
 import numpy as np
 import pandas as pd
 from sklearn.metrics import (roc_auc_score, precision_score, recall_score,
-                             f1_score)
+                             f1_score, accuracy_score)
 from sklearn.model_selection import train_test_split
 
-from optimization.grid_search import run_grid_search
+from optimization.grid_search import run_grid_search, run_logistic_grid
 from optimization.random_search import run_random_search
 from optimization.bayesian_optimization import run_optuna
 from optimization.compare_models import summarize_results
 
 RND = 42
+
 
 def simple_preprocess(df):
     # Simple, safe preprocessing so optimization is runnable without other modules.
@@ -44,6 +45,7 @@ def simple_preprocess(df):
     X = X.fillna(0)
     return X, y
 
+
 def evaluate_on_test(model, X_test, y_test):
     preds = model.predict(X_test)
     probs = None
@@ -56,10 +58,13 @@ def evaluate_on_test(model, X_test, y_test):
             probs = np.zeros(len(y_test))
     return {
         "test_roc_auc": float(roc_auc_score(y_test, probs)),
+        "test_auc": float(roc_auc_score(y_test, probs)),
+        "test_accuracy": float(accuracy_score(y_test, preds)),
         "test_recall": float(recall_score(y_test, preds)),
         "test_precision": float(precision_score(y_test, preds)),
         "test_f1": float(f1_score(y_test, preds))
     }
+
 
 def append_summary(out_dir, row):
     out_dir = Path(out_dir)
@@ -71,6 +76,7 @@ def append_summary(out_dir, row):
         df = pd.concat([df_existing, df], ignore_index=True)
     df.to_csv(summary_path, index=False)
     print(f"Wrote summary to {summary_path}")
+
 
 def main(args):
     data_path = Path(args.data)
@@ -86,10 +92,27 @@ def main(args):
         X, y, test_size=0.2, random_state=RND, stratify=y
     )
 
-    # Run Grid Search
-    print("Running Grid Search...")
+    # Logistic Regression Grid Search (baseline)
+    print("Running Logistic Regression Grid Search (baseline)...")
+    log_model, log_cv_score, log_record = run_logistic_grid(
+        X_train, y_train, cv=5, out_dir=out_dir / "grid_search" / "logistic"
+    )
+    joblib.dump(log_model, models_out / "logistic_grid_best.joblib")
+    log_eval = evaluate_on_test(log_model, X_test, y_test)
+    log_row = {
+        "method": "grid_search",
+        "model": "LogisticRegression",
+        "cv_roc_auc": log_cv_score,
+        "cv_auc": log_cv_score,
+        **log_eval,
+        "best_params": json.dumps(log_record.get("best_params", {}))
+    }
+    append_summary(out_dir, log_row)
+
+    # Run Grid Search for Random Forest
+    print("Running Random Forest Grid Search...")
     gs_model, gs_cv_score, gs_record = run_grid_search(
-        X_train, y_train, cv=5, out_dir=out_dir / "grid_search"
+        X_train, y_train, cv=5, out_dir=out_dir / "grid_search" / "random_forest"
     )
     joblib.dump(gs_model, models_out / "rf_grid_search_best.joblib")
     gs_eval = evaluate_on_test(gs_model, X_test, y_test)
@@ -97,6 +120,7 @@ def main(args):
         "method": "grid_search",
         "model": "RandomForest",
         "cv_roc_auc": gs_cv_score,
+        "cv_auc": gs_cv_score,
         **gs_eval,
         "best_params": json.dumps(gs_record.get("best_params", {}))
     }
@@ -113,6 +137,7 @@ def main(args):
         "method": "random_search",
         "model": "RandomForest",
         "cv_roc_auc": rs_cv_score,
+        "cv_auc": rs_cv_score,
         **rs_eval,
         "best_params": json.dumps(rs_record.get("best_params", {}))
     }
@@ -129,6 +154,7 @@ def main(args):
         "method": "optuna",
         "model": "RandomForest",
         "cv_roc_auc": opt_cv_score,
+        "cv_auc": opt_cv_score,
         **opt_eval,
         "best_params": json.dumps(opt_record.get("best_params", {}))
     }
@@ -138,6 +164,7 @@ def main(args):
     print("Summarizing results and creating plots...")
     summarize_results(out_dir, out_dir / "optimization_plots.png")
     print("Done.")
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
