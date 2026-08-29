@@ -22,28 +22,9 @@ from optimization.random_search import run_random_search
 from optimization.bayesian_optimization import run_optuna
 from optimization.compare_models import summarize_results
 
+from preprocessing import load_engineer, split_X_y, build_preprocessor
+
 RND = 42
-
-
-def simple_preprocess(df):
-    # Simple, safe preprocessing so optimization is runnable without other modules.
-    df = df.copy()
-    # drop obvious id column if present
-    for id_col in ("customerID", "id", "cust_id"):
-        if id_col in df.columns:
-            df = df.drop(columns=[id_col])
-    # target mapping
-    if "Churn" in df.columns:
-        y = df["Churn"].map({"Yes":1, "No":0}).astype(int)
-        X = df.drop(columns=["Churn"])
-    else:
-        # assume last column is target if named oddly
-        y = df.iloc[:, -1]
-        X = df.iloc[:, :-1]
-    # to numeric: get_dummies for categoricals, fillna
-    X = pd.get_dummies(X, drop_first=True)
-    X = X.fillna(0)
-    return X, y
 
 
 def evaluate_on_test(model, X_test, y_test):
@@ -57,12 +38,11 @@ def evaluate_on_test(model, X_test, y_test):
         except Exception:
             probs = np.zeros(len(y_test))
     return {
-        "test_roc_auc": float(roc_auc_score(y_test, probs)),
         "test_auc": float(roc_auc_score(y_test, probs)),
         "test_accuracy": float(accuracy_score(y_test, preds)),
         "test_recall": float(recall_score(y_test, preds)),
         "test_precision": float(precision_score(y_test, preds)),
-        "test_f1": float(f1_score(y_test, preds))
+        "test_f1": float(f1_score(y_test, preds)),
     }
 
 
@@ -85,78 +65,99 @@ def main(args):
     out_dir.mkdir(parents=True, exist_ok=True)
     models_out.mkdir(parents=True, exist_ok=True)
 
-    df = pd.read_csv(data_path)
-    X, y = simple_preprocess(df)
+    # Load and engineer features (no encoding)
+    df = load_engineer(str(data_path))
+    X, y = split_X_y(df)
 
+    # Train/test split (hold-out set must remain untouched during optimization)
     X_train, X_test, y_train, y_test = train_test_split(
         X, y, test_size=0.2, random_state=RND, stratify=y
     )
 
-    # Logistic Regression Grid Search (baseline)
+    # Build preprocessor fitted only on training data schema
+    preprocessor = build_preprocessor(X_train)
+
+    # Logistic Regression baseline (Grid Search)
     print("Running Logistic Regression Grid Search (baseline)...")
     log_model, log_cv_score, log_record = run_logistic_grid(
-        X_train, y_train, cv=5, out_dir=out_dir / "grid_search" / "logistic"
+        X_train, y_train, preprocessor=preprocessor, cv=5, out_dir=out_dir / "grid_search" / "logistic"
     )
     joblib.dump(log_model, models_out / "logistic_grid_best.joblib")
     log_eval = evaluate_on_test(log_model, X_test, y_test)
     log_row = {
         "method": "grid_search",
         "model": "LogisticRegression",
-        "cv_roc_auc": log_cv_score,
         "cv_auc": log_cv_score,
-        **log_eval,
-        "best_params": json.dumps(log_record.get("best_params", {}))
+        "test_auc": log_eval["test_auc"],
+        "accuracy": log_eval["test_accuracy"],
+        "precision": log_eval["test_precision"],
+        "recall": log_eval["test_recall"],
+        "f1": log_eval["test_f1"],
+        "best_params": json.dumps(log_record.get("best_params", {})),
+        "generalization_gap": float(log_cv_score - log_eval["test_auc"]),
     }
     append_summary(out_dir, log_row)
 
-    # Run Grid Search for Random Forest
+    # Random Forest Grid Search
     print("Running Random Forest Grid Search...")
     gs_model, gs_cv_score, gs_record = run_grid_search(
-        X_train, y_train, cv=5, out_dir=out_dir / "grid_search" / "random_forest"
+        X_train, y_train, preprocessor=preprocessor, cv=5, out_dir=out_dir / "grid_search" / "random_forest"
     )
     joblib.dump(gs_model, models_out / "rf_grid_search_best.joblib")
     gs_eval = evaluate_on_test(gs_model, X_test, y_test)
     gs_row = {
         "method": "grid_search",
         "model": "RandomForest",
-        "cv_roc_auc": gs_cv_score,
         "cv_auc": gs_cv_score,
-        **gs_eval,
-        "best_params": json.dumps(gs_record.get("best_params", {}))
+        "test_auc": gs_eval["test_auc"],
+        "accuracy": gs_eval["test_accuracy"],
+        "precision": gs_eval["test_precision"],
+        "recall": gs_eval["test_recall"],
+        "f1": gs_eval["test_f1"],
+        "best_params": json.dumps(gs_record.get("best_params", {})),
+        "generalization_gap": float(gs_cv_score - gs_eval["test_auc"]),
     }
     append_summary(out_dir, gs_row)
 
-    # Run Random Search
+    # Randomized Search
     print("Running Randomized Search...")
     rs_model, rs_cv_score, rs_record = run_random_search(
-        X_train, y_train, cv=5, out_dir=out_dir / "random_search"
+        X_train, y_train, preprocessor=preprocessor, cv=5, n_iter=30, out_dir=out_dir / "random_search", random_state=RND
     )
     joblib.dump(rs_model, models_out / "rf_random_search_best.joblib")
     rs_eval = evaluate_on_test(rs_model, X_test, y_test)
     rs_row = {
         "method": "random_search",
         "model": "RandomForest",
-        "cv_roc_auc": rs_cv_score,
         "cv_auc": rs_cv_score,
-        **rs_eval,
-        "best_params": json.dumps(rs_record.get("best_params", {}))
+        "test_auc": rs_eval["test_auc"],
+        "accuracy": rs_eval["test_accuracy"],
+        "precision": rs_eval["test_precision"],
+        "recall": rs_eval["test_recall"],
+        "f1": rs_eval["test_f1"],
+        "best_params": json.dumps(rs_record.get("best_params", {})),
+        "generalization_gap": float(rs_cv_score - rs_eval["test_auc"]),
     }
     append_summary(out_dir, rs_row)
 
-    # Run Optuna
+    # Optuna Bayesian Optimization
     print("Running Optuna Bayesian Optimization...")
     opt_model, opt_cv_score, opt_record = run_optuna(
-        X_train, y_train, cv=5, n_trials=args.optuna_trials, out_dir=out_dir / "optuna"
+        X_train, y_train, preprocessor=preprocessor, cv=5, n_trials=args.optuna_trials, out_dir=out_dir / "optuna"
     )
     joblib.dump(opt_model, models_out / "rf_optuna_best.joblib")
     opt_eval = evaluate_on_test(opt_model, X_test, y_test)
     opt_row = {
         "method": "optuna",
         "model": "RandomForest",
-        "cv_roc_auc": opt_cv_score,
         "cv_auc": opt_cv_score,
-        **opt_eval,
-        "best_params": json.dumps(opt_record.get("best_params", {}))
+        "test_auc": opt_eval["test_auc"],
+        "accuracy": opt_eval["test_accuracy"],
+        "precision": opt_eval["test_precision"],
+        "recall": opt_eval["test_recall"],
+        "f1": opt_eval["test_f1"],
+        "best_params": json.dumps(opt_record.get("best_params", {})),
+        "generalization_gap": float(opt_cv_score - opt_eval["test_auc"]),
     }
     append_summary(out_dir, opt_row)
 
