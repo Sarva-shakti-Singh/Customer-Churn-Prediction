@@ -4,23 +4,35 @@ from pathlib import Path
 
 import pandas as pd
 from sklearn.model_selection import GridSearchCV
-from sklearn.model_selection import cross_val_score
+from sklearn.pipeline import Pipeline
 
 from .optimization_config import RF_PARAM_GRID, rf_base
 
-from sklearn.linear_model import LogisticRegression
-from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import StandardScaler
+
+def _prefix_params(param_dict, prefix="clf__"):
+    return {f"{prefix}{k}": v for k, v in param_dict.items()}
 
 
-def run_grid_search(X, y, cv=5, out_dir="experiments/grid_search"):
+def run_grid_search(X, y, preprocessor=None, cv=5, out_dir="experiments/grid_search"):
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    model = rf_base()
+    # If a preprocessor is provided, wrap the estimator in a Pipeline so that
+    # transformations are fit only on training folds.
+    if preprocessor is not None:
+        pipe = Pipeline([
+            ("preprocessor", preprocessor),
+            ("clf", rf_base())
+        ])
+        param_grid = _prefix_params(RF_PARAM_GRID, prefix="clf__")
+        estimator = pipe
+    else:
+        estimator = rf_base()
+        param_grid = RF_PARAM_GRID
+
     gs = GridSearchCV(
-        estimator=model,
-        param_grid=RF_PARAM_GRID,
+        estimator=estimator,
+        param_grid=param_grid,
         cv=cv,
         scoring="roc_auc",
         n_jobs=-1,
@@ -45,30 +57,40 @@ def run_grid_search(X, y, cv=5, out_dir="experiments/grid_search"):
     return best, best_score, record
 
 
-def run_logistic_grid(X, y, cv=5, out_dir="experiments/grid_search/logistic", random_state=42):
+def run_logistic_grid(X, y, preprocessor=None, cv=5, out_dir="experiments/grid_search/logistic", random_state=42):
     """Run a small GridSearchCV for LogisticRegression as an interpretable baseline.
 
-    This function accepts feature matrix X and target y (compatibility with tests)
-    and performs GridSearch over C and penalty using a simple pipeline that
-    scales numeric features.
+    If a preprocessor (ColumnTransformer) is provided, it will be used inside
+    a Pipeline so that encoding/scaling is fit only on train folds.
     """
+    from sklearn.linear_model import LogisticRegression
+
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    pipe = Pipeline([
-        ("scaler", StandardScaler()),
-        ("clf", LogisticRegression(class_weight='balanced', random_state=random_state, max_iter=1000))
-    ])
+    clf = LogisticRegression(class_weight='balanced', random_state=random_state, max_iter=1000)
 
-    param_grid = {
-        "clf__C": [0.01, 0.1, 1.0, 10.0],
-        "clf__penalty": ["l1", "l2"],
-        # liblinear supports l1/l2 and is robust across sklearn versions
-        "clf__solver": ["liblinear"],
-    }
+    if preprocessor is not None:
+        pipe = Pipeline([
+            ("preprocessor", preprocessor),
+            ("clf", clf)
+        ])
+        estimator = pipe
+        param_grid = {
+            "clf__C": [0.01, 0.1, 1.0, 10.0],
+            "clf__penalty": ["l1", "l2"],
+            "clf__solver": ["liblinear"],
+        }
+    else:
+        estimator = clf
+        param_grid = {
+            "C": [0.01, 0.1, 1.0, 10.0],
+            "penalty": ["l1", "l2"],
+            "solver": ["liblinear"],
+        }
 
     gs = GridSearchCV(
-        estimator=pipe,
+        estimator=estimator,
         param_grid=param_grid,
         cv=cv,
         scoring="roc_auc",
