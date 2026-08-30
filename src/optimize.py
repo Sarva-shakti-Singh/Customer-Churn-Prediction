@@ -17,8 +17,8 @@ from sklearn.metrics import (roc_auc_score, precision_score, recall_score,
                              f1_score, accuracy_score)
 from sklearn.model_selection import train_test_split
 
-# Add src to path to enable relative imports
-sys.path.insert(0, str(Path(__file__).parent))
+# Add project root to path to enable imports
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.optimization.grid_search import run_grid_search, run_logistic_grid
 from src.optimization.random_search import run_random_search
