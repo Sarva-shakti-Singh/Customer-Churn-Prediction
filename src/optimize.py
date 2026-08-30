@@ -3,11 +3,11 @@
 Entrypoint for Week 5 optimization experiments.
 
 Usage:
-    python -m src.optimize --data data/telco_customer_churn.csv --out experiments --models_out models
+    python -m src.optimize --data data/telco_customer_churn.csv --out experiments --models_out models --optuna_trials 50
 """
 import argparse
 import json
-import os
+import sys
 from pathlib import Path
 
 import joblib
@@ -17,12 +17,15 @@ from sklearn.metrics import (roc_auc_score, precision_score, recall_score,
                              f1_score, accuracy_score)
 from sklearn.model_selection import train_test_split
 
-from optimization.grid_search import run_grid_search, run_logistic_grid
-from optimization.random_search import run_random_search
-from optimization.bayesian_optimization import run_optuna
-from optimization.compare_models import summarize_results
+# Add src to path to enable relative imports
+sys.path.insert(0, str(Path(__file__).parent))
 
-from preprocessing import load_engineer, split_X_y, build_preprocessor
+from src.optimization.grid_search import run_grid_search, run_logistic_grid
+from src.optimization.random_search import run_random_search
+from src.optimization.bayesian_optimization import run_optuna
+from src.optimization.compare_models import summarize_results
+
+from src.preprocessing import load_engineer, split_X_y, build_preprocessor
 
 RND = 42
 
@@ -65,20 +68,34 @@ def main(args):
     out_dir.mkdir(parents=True, exist_ok=True)
     models_out.mkdir(parents=True, exist_ok=True)
 
+    # Validate dataset exists
+    if not data_path.exists():
+        print(f"\n❌ ERROR: Dataset not found at {data_path}")
+        print("Please download the IBM Telco Customer Churn dataset from:")
+        print("https://www.kaggle.com/datasets/blastchar/telco-customer-churn")
+        print(f"And place it at: {data_path}\n")
+        sys.exit(1)
+
     # Load and engineer features (no encoding)
+    print(f"Loading data from {data_path}...")
     df = load_engineer(str(data_path))
+    print(f"Dataset shape: {df.shape}")
     X, y = split_X_y(df)
 
     # Train/test split (hold-out set must remain untouched during optimization)
     X_train, X_test, y_train, y_test = train_test_split(
         X, y, test_size=0.2, random_state=RND, stratify=y
     )
+    print(f"Train set: {X_train.shape}, Test set: {X_test.shape}")
+    print(f"Class distribution - Train: {y_train.value_counts().to_dict()}, Test: {y_test.value_counts().to_dict()}")
 
     # Build preprocessor fitted only on training data schema
     preprocessor = build_preprocessor(X_train)
 
     # Logistic Regression baseline (Grid Search)
+    print("\n" + "="*70)
     print("Running Logistic Regression Grid Search (baseline)...")
+    print("="*70)
     log_model, log_cv_score, log_record = run_logistic_grid(
         X_train, y_train, preprocessor=preprocessor, cv=5, out_dir=out_dir / "grid_search" / "logistic"
     )
@@ -97,9 +114,12 @@ def main(args):
         "generalization_gap": float(log_cv_score - log_eval["test_auc"]),
     }
     append_summary(out_dir, log_row)
+    print(f"CV AUC: {log_cv_score:.4f}, Test AUC: {log_eval['test_auc']:.4f}")
 
     # Random Forest Grid Search
+    print("\n" + "="*70)
     print("Running Random Forest Grid Search...")
+    print("="*70)
     gs_model, gs_cv_score, gs_record = run_grid_search(
         X_train, y_train, preprocessor=preprocessor, cv=5, out_dir=out_dir / "grid_search" / "random_forest"
     )
@@ -118,9 +138,12 @@ def main(args):
         "generalization_gap": float(gs_cv_score - gs_eval["test_auc"]),
     }
     append_summary(out_dir, gs_row)
+    print(f"CV AUC: {gs_cv_score:.4f}, Test AUC: {gs_eval['test_auc']:.4f}")
 
     # Randomized Search
+    print("\n" + "="*70)
     print("Running Randomized Search...")
+    print("="*70)
     rs_model, rs_cv_score, rs_record = run_random_search(
         X_train, y_train, preprocessor=preprocessor, cv=5, n_iter=30, out_dir=out_dir / "random_search", random_state=RND
     )
@@ -139,9 +162,12 @@ def main(args):
         "generalization_gap": float(rs_cv_score - rs_eval["test_auc"]),
     }
     append_summary(out_dir, rs_row)
+    print(f"CV AUC: {rs_cv_score:.4f}, Test AUC: {rs_eval['test_auc']:.4f}")
 
     # Optuna Bayesian Optimization
+    print("\n" + "="*70)
     print("Running Optuna Bayesian Optimization...")
+    print("="*70)
     opt_model, opt_cv_score, opt_record = run_optuna(
         X_train, y_train, preprocessor=preprocessor, cv=5, n_trials=args.optuna_trials, out_dir=out_dir / "optuna"
     )
@@ -160,9 +186,12 @@ def main(args):
         "generalization_gap": float(opt_cv_score - opt_eval["test_auc"]),
     }
     append_summary(out_dir, opt_row)
+    print(f"CV AUC: {opt_cv_score:.4f}, Test AUC: {opt_eval['test_auc']:.4f}")
 
     # Summarize + plots
+    print("\n" + "="*70)
     print("Summarizing results and creating plots...")
+    print("="*70)
     summarize_results(out_dir, out_dir / "optimization_plots.png")
     print("Done.")
 
